@@ -1,0 +1,30 @@
+{
+    "total_features": 267,
+    "adaptive_lasso_config": {
+        "learning_rate": 0.01,
+        "lambda0": 0.5,
+        "n_iters": 3000,
+        "schedule": "inverse_sqrt",
+        "decay_k": 0.01,
+        "tol": 1e-06,
+        "fit_intercept": true
+    },
+    "models": {
+        "Linear Regression": {
+            "MSE": 0.016687003248893092,
+            "Non-zero Features": 267
+        },
+        "Ridge Regression": {
+            "MSE": 0.015047584392734438,
+            "Non-zero Features": 267
+        },
+        "Standard LASSO": {
+            "MSE": 0.019972928757581745,
+            "Non-zero Features": 16
+        },
+        "Adaptive LASSO": {
+            "MSE": 0.10389092018284732,
+            "Non-zero Features": 91
+        }
+    }
+}
