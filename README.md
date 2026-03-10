@@ -1,493 +1,353 @@
-
 ## 1. Project Title
 
 **Adaptive LASSO using Proximal Gradient Descent with Dynamic Soft Thresholding**
 
-This repository implements and evaluates a custom Adaptive LASSO-style regression model trained via Proximal Gradient Descent with a dynamic soft-thresholding operator. The system is built around the House Prices: Advanced Regression Techniques dataset and is designed to study feature selection in a high-dimensional regression setting.
+This project builds a custom regression model that predicts house prices while also selecting which input features are really important. It does this using an optimization method called proximal gradient descent combined with a dynamic (changing over time) version of LASSO regularization.
 
 ---
 
-## 2. Project Motivation
+## 2. Project Goal
 
-### 2.1 Overfitting in High-Dimensional Regression
+The main problem we are solving is:
 
-In regression problems with many input features, it is easy for models to **overfit**: they learn noise and spurious correlations in the training data instead of the underlying signal. This typically results in:
-- Low training error but
-- Poor generalization performance on unseen test data.
+> **Predict house prices accurately while reducing the number of unnecessary features.**
 
-When the number of features is large relative to the number of samples, overfitting becomes especially severe. Many features may be redundant, weakly informative, or purely noisy.
+In the House Prices dataset there are many features: room counts, quality scores, neighborhood labels, etc. After preprocessing and one‑hot encoding, we have around **267 input features**. Not all of them are truly useful.
 
-### 2.2 Why Feature Selection Matters
+### Why feature selection is important
 
-**Feature selection** aims to identify a subset of informative predictors and discard the rest. This has several advantages:
-- **Improved generalization**: Reducing the effective dimensionality can decrease variance and improve test performance.
-- **Interpretability**: Sparse models are easier to interpret because they highlight a small set of important features.
-- **Efficiency**: Fewer active features mean cheaper inference and sometimes simpler modeling pipelines.
+- **Improves interpretability**  
+  If only a small number of features have non‑zero coefficients, it is easier to explain which factors affect the price.
 
-### 2.3 Why LASSO is Commonly Used
+- **Reduces overfitting**  
+  Using too many weak or noisy features can cause the model to memorize the training data and perform worse on unseen data. Selecting a smaller set of strong features usually generalizes better.
 
-The **LASSO (Least Absolute Shrinkage and Selection Operator)** adds an \(\ell_1\) penalty to the regression objective. For a linear model \(y \approx Xw\), LASSO solves:
-\[
-\min_w \frac{1}{2n}\lVert y - Xw \rVert_2^2 + \lambda \lVert w \rVert_1,
-\]
-where \(\lambda \ge 0\) is the regularization strength.
+- **Simplifies models**  
+  A sparser model (with many zero coefficients) is cheaper to store, faster to evaluate, and easier to debug or extend.
 
-The \(\ell_1\) penalty encourages **sparsity** in the coefficient vector \(w\): many components become exactly zero. This makes LASSO a standard tool for feature selection in high-dimensional regression.
-
-### 2.4 Limitation of Static L1 Regularization
-
-Standard LASSO uses a **single, static** regularization strength \(\lambda\) throughout optimization. This creates a tension:
-- A **large** \(\lambda\) aggressively shrinks coefficients, producing high sparsity but potentially **underfitting** (losing important signal).
-- A **small** \(\lambda\) maintains good predictive performance but may leave **too many features active**, reducing sparsity and interpretability.
-
-In other words, static L1 regularization must trade off sparsity and accuracy with one global knob. It cannot, for example, prune aggressively early and then refine the active set with a gentler penalty later.
-
-### 2.5 Goal of This Project
-
-The goal of this project is to **improve feature selection** by introducing a **dynamic soft-thresholding mechanism**. Instead of using a fixed \(\lambda\), we allow the effective penalty \(\lambda_t\) to **change with iteration**. This enables:
-- **Early strong regularization** to prune uninformative features, followed by
-- **Later weaker regularization** to refine the coefficients of the remaining active features.
-
-This idea is closely related to **Adaptive LASSO**, where the penalty is adapted to the importance of each coefficient. Here, the adaptation happens over **time** via a lambda schedule.
+This project explores how **numerical optimization techniques** (in particular proximal gradient descent with dynamic regularization) can improve feature selection compared to standard methods.
 
 ---
 
-## 3. Optimization Theme
+## 3. Dataset Used
 
-This project is built around the Numerical Optimization theme:
+The dataset used in this project is:
 
-**Dynamic Soft-Thresholding for Feature Selection in High-Dimensional Regression.**
+> **House Prices: Advanced Regression Techniques** (popular Kaggle dataset, also available via OpenML)
 
-We implement an **Adaptive LASSO optimizer** using **Proximal Gradient Descent**. The key elements are:
-- A **LASSO-style objective** with an \(\ell_1\) penalty.
-- A **proximal gradient descent** solver that separates the smooth (MSE) and non-smooth (L1) parts of the objective.
-- A **dynamic soft-thresholding operator** driven by a time-varying \(\lambda_t\) schedule.
+Each row in the dataset corresponds to a house sale. The features include:
 
-This setup allows us to study how different lambda schedules affect:
-- Convergence behaviour,
-- Feature sparsity, and
-- Prediction accuracy.
+- **House characteristics**  
+  Floor area, number of rooms, number of bathrooms, presence of a garage or basement, etc.
 
----
+- **Neighborhood information**  
+  Which neighborhood the house is in, zoning, surrounding conditions.
 
-## 4. Mathematical Background
+- **Building quality and condition**  
+  Overall quality scores, materials, finishing, and maintenance condition.
 
-### 4.1 LASSO Regression Objective
+- **Lot and exterior details**  
+  Lot size, lot shape, alley access, fence, pool quality (when available), and other exterior features.
 
-Given:
-- Design matrix \(X \in \mathbb{R}^{n \times d}\),
-- Target vector \(y \in \mathbb{R}^n\),
-- Coefficients \(w \in \mathbb{R}^d\),
+The target variable is the **sale price** of the house (log‑transformed in our preprocessing).
 
-the **LASSO** objective is:
-\[
-\min_w \frac{1}{2n}\lVert y - Xw \rVert_2^2 + \lambda \lVert w \rVert_1,
-\]
-where:
-- The first term is the **mean squared error (MSE)** loss,
-- The second term is an **\(\ell_1\) penalty** scaled by \(\lambda\).
+### Preprocessing steps
 
-### 4.2 Why L1 Regularization Causes Sparsity
+All preprocessing logic lives in `src/data_preprocessing.py`. The main steps are:
 
-The \(\ell_1\) norm \(\lVert w \rVert_1 = \sum_j |w_j|\) has a **sharp corner at zero**, unlike the smooth \(\ell_2\) norm. When used as a penalty:
-- The optimizer is encouraged to push some coefficients **exactly to zero**,
-- This creates a **sparse** coefficient vector,
-- Features with zero coefficients are effectively **deselected** from the model.
+- **Removing outliers**  
+  Extreme outliers in living area (`GrLivArea` > 4000) are removed to avoid distorting the regression.
 
-This property makes LASSO a natural tool for feature selection.
+- **Handling missing values**  
+  - Numerical columns: missing values are filled with the median of each column.  
+  - Categorical columns: missing values are filled with the most frequent category.
 
-### 4.3 Proximal Gradient Descent
+- **Encoding categorical features**  
+  Categorical columns (like neighborhood) are converted into numerical vectors using **one‑hot encoding**. Each category becomes its own binary feature. This is why the final feature count grows to about **267 features**.
 
-The LASSO objective combines:
-- A smooth part: \(f(w) = \frac{1}{2n}\lVert y - Xw \rVert_2^2\),
-- A non-smooth part: \(g(w) = \lambda \lVert w \rVert_1\).
+- **Scaling numerical features**  
+  Numerical columns are standardized so they have roughly zero mean and unit variance. This helps gradient‑based optimization converge more smoothly.
 
-**Proximal Gradient Descent** is designed for such composite objectives. At each iteration:
-1. Take a **gradient step** on the smooth part \(f\),
-2. Apply a **proximal operator** for the non-smooth part \(g\).
+- **Splitting train/test data**  
+  The dataset is split into training and test sets so we can evaluate generalization performance using **test Mean Squared Error (MSE)**.
 
-In this project we also include an **intercept** \(b\), so the smooth part is:
-\[
-f(w, b) = \frac{1}{2n}\lVert Xw + b - y \rVert_2^2.
-\]
-Its gradients are:
-\[
-\nabla_w f = \frac{1}{n} X^\top (Xw + b - y), \quad
-\nabla_b f = \frac{1}{n} \sum_i (Xw + b - y)_i.
-\]
+After all these steps, we obtain:
 
-#### Step 1: Gradient Descent on the MSE Loss
-
-With learning rate \(\eta > 0\), a gradient step is:
-\[
-\tilde{w} = w - \eta \nabla_w f, \quad
-b \leftarrow b - \eta \nabla_b f.
-\]
-
-#### Step 2: Soft-Thresholding Operator
-
-The proximal operator for \(g(w) = \lambda \lVert w \rVert_1\) is the **soft-thresholding operator**:
-\[
-\text{prox}_{\eta \lambda}(z)_i
-  = \operatorname{sign}(z_i)\,\max(|z_i| - \eta \lambda, 0).
-\]
-
-Thus, after the gradient step, we apply:
-\[
-w_i \leftarrow \operatorname{sign}(\tilde{w}_i)\,\max(|\tilde{w}_i| - \eta \lambda, 0).
-\]
-
-This is exactly the soft-thresholding rule implemented in this project. It:
-- Shrinks coefficients toward zero, and
-- Sets them **exactly to zero** when \(|\tilde{w}_i| \le \eta \lambda\).
-
-### 4.4 Dynamic Lambda Schedules
-
-Instead of a static \(\lambda\), this project uses a **time-varying** \(\lambda_t\) at iteration \(t\). The proximal step becomes:
-\[
-w_i \leftarrow \operatorname{sign}(\tilde{w}_i)\,\max(|\tilde{w}_i| - \eta \lambda_t, 0).
-\]
-
-We implement two dynamic schedules (plus a constant baseline):
-
-- **Inverse square-root decay**:
-  \[
-  \lambda_t = \frac{\lambda_0}{\sqrt{t}}.
-  \]
-- **Exponential decay**:
-  \[
-  \lambda_t = \lambda_0 \exp(-k t),
-  \]
-  where \(k > 0\) controls how fast the decay happens.
-
-The intuition:
-- **Early iterations** (small \(t\)): \(\lambda_t\) is relatively large → strong soft-thresholding → many coefficients are driven to zero (“aggressive pruning”).
-- **Later iterations** (large \(t\)): \(\lambda_t\) is smaller → weaker regularization → remaining non-zero coefficients are refined to reduce MSE.
-
-This **aggressive early pruning + gradual stabilization** can yield models that:
-- Are **sparser** than standard LASSO for a similar level of test MSE,
-- Potentially offer a better interpretability–accuracy trade-off.
+- `X_train` and `X_test`: preprocessed design matrices with about 267 features.
+- `y_train` and `y_test`: log‑transformed house prices.
 
 ---
 
-## 5. Dataset
+## 4. Models Compared in the Project
 
-### 5.1 House Prices: Advanced Regression Techniques
+We compare four regression models:
 
-The project uses the **House Prices: Advanced Regression Techniques** dataset, a popular benchmark from Kaggle and OpenML. Each sample corresponds to a residential house sale, and the target is the **sale price**.
+1. **Linear Regression**  
+   - Basic least‑squares model with **no regularization**.  
+   - Tries to fit the best straight‑line relationship in this high‑dimensional feature space.  
+   - Uses all 267 features (no feature selection).
 
-The dataset includes:
-- **Housing attributes**: overall quality, year built, square footage, etc.
-- **Structural features**: number of rooms, garage size, basement type, etc.
-- **Location and quality indicators**: neighborhood, zoning, condition, etc.
+2. **Ridge Regression**  
+   - Linear regression with **L2 regularization** (penalizes large weights but does not set them exactly to zero).  
+   - Helps reduce overfitting but typically keeps all features non‑zero.
 
-This combination yields a **high-dimensional feature space** after categorical variables are one-hot encoded, making it a good testbed for feature selection techniques.
+3. **Standard LASSO**  
+   - Linear regression with **L1 regularization**.  
+   - The L1 penalty encourages some weights to become exactly zero → performs **feature selection**.  
+   - Uses a fixed regularization strength (a single lambda value for the whole training).
 
-### 5.2 Preprocessing in `data_preprocessing.py`
+4. **Adaptive LASSO (our implementation)**  
+   - Uses the **same L1 penalty idea**, but the regularization strength is **dynamic** and changes over time during training.  
+   - Implemented using **proximal gradient descent** plus a **dynamic soft‑thresholding** rule.  
+   - Aims to get a good balance between sparsity (few features) and prediction accuracy.
 
-All preprocessing steps are implemented in `src/data_preprocessing.py`:
-
-- **Dataset loading**:
-  - Uses `fetch_openml(name="house_prices", as_frame=True)` from scikit-learn.
-
-- **Outlier removal**:
-  - Removes extreme outliers in `GrLivArea` (above 4000 sq. ft.), as recommended by the dataset author, to stabilize the regression.
-
-- **Dropping mostly-empty columns**:
-  - Columns like `PoolQC`, `MiscFeature`, `Alley`, `Fence`, `FireplaceQu` are dropped when present, as they are sparse and mostly missing.
-
-- **Target transformation**:
-  - The target `SalePrice` is transformed as \(\log(1 + \text{SalePrice})\) (`np.log1p`) to reduce skewness and stabilize the regression.
-
-- **Train/test split**:
-  - The dataset is split into training and test sets using `train_test_split` with a fixed `random_state` for reproducibility.
-
-- **Handling missing values and scaling**:
-  - **Numerical features**:
-    - Imputed using median values (`SimpleImputer(strategy="median")`).
-    - Scaled using `StandardScaler` to have approximately zero mean and unit variance.
-  - **Categorical features**:
-    - Imputed using the most frequent category.
-    - Encoded with `OneHotEncoder(handle_unknown="ignore", sparse_output=False)` to produce a dense design matrix.
-
-- **Saving processed arrays**:
-  - Optionally saves:
-    - `X_train.npy`, `X_test.npy`,
-    - `y_train.npy`, `y_test.npy`
-  - into `data/processed/` (relative to the project), enabling reuse by other scripts.
-
-The function `get_processed_data` returns processed arrays and the fitted preprocessing pipeline:
-\[
-X_{\text{train}}, X_{\text{test}}, y_{\text{train}}, y_{\text{test}}, \text{preprocessor}.
-\]
+All four models are trained on the **same preprocessed dataset**, so their results are directly comparable.
 
 ---
 
-## 6. Project Pipeline
+## 5. Main Idea of the Project
 
-The complete workflow of the project is:
+### Limitation of standard LASSO
 
-1. **Data preprocessing** (`data_preprocessing.py`)  
-   - Load raw House Prices data from OpenML.
-   - Remove outliers and sparse columns.
-   - Impute missing values, encode categoricals, scale numericals.
-   - Split into train/test sets and (optionally) save processed arrays.
+Standard LASSO uses a **fixed regularization parameter** \(\lambda\) throughout training:
 
-2. **Baseline model training** (`baselines.py`)  
-   - Train standard sklearn models:
-     - Linear Regression,
-     - Ridge Regression,
-     - Standard LASSO.
-   - Compute baseline metrics (MSE and sparsity).
+- If \(\lambda\) is **large**, the model becomes very sparse (many zero coefficients), but it may also remove important features and hurt accuracy.
+- If \(\lambda\) is **small**, the model keeps more features and may achieve lower error, but sparsity and interpretability are worse.
 
-3. **Adaptive LASSO optimization** (`adaptive_lasso.py`, `train_adaptive_lasso.py`)  
-   - Initialize `AdaptiveLasso` with a chosen lambda schedule.
-   - Run proximal gradient descent with dynamic soft-thresholding.
-   - Track loss and sparsity over iterations.
+There is no way to “prune strongly at the beginning and relax later” with a single fixed \(\lambda\).
 
-4. **Experiment comparison** (`train_adaptive_lasso.py`)  
-   - Evaluate all models (baselines + Adaptive LASSO) on the same test set.
-   - Aggregate metrics into a unified JSON file.
+### Improvement introduced in this project
 
-5. **Visualization of results** (`visualization.py`)  
-   - Plot optimization curves (loss and sparsity over iterations).
-   - Plot model comparison charts (MSE vs sparsity).
+Our Adaptive LASSO uses a **dynamic regularization schedule**:
 
-This pipeline provides an end-to-end environment to study and compare feature selection behaviour in high-dimensional regression.
+\[
+\lambda_t = \frac{\lambda_0}{\sqrt{t}}
+\]
+
+Here:
+
+- \(\lambda_0\) is the initial (strong) regularization strength.
+- \(t\) is the iteration number during training.
+
+**Interpretation:**
+
+- **Early iterations** (small \(t\)) → \(\lambda_t\) is large → **strong shrinking of coefficients**. Many unimportant features are pushed quickly toward zero.
+- **Later iterations** (large \(t\)) → \(\lambda_t\) becomes smaller → regularization gets weaker, and the model focuses more on **fine‑tuning** the remaining non‑zero coefficients.
+
+This dynamic behaviour gives a different sparsity pattern compared to standard LASSO with a fixed \(\lambda\).
+
+---
+
+## 6. Optimization Algorithm
+
+The Adaptive LASSO optimizer is implemented in `src/adaptive_lasso.py` using **proximal gradient descent**. In simple terms, each training iteration does two steps:
+
+### Step 1: Gradient descent to reduce prediction error
+
+- The model first updates its weights to reduce the **prediction error** (difference between predicted price and true price).
+- This is a standard gradient descent step, moving the weights in the direction that reduces the mean squared error on the training data.
+
+### Step 2: Soft‑thresholding to shrink coefficients and remove features
+
+- After the gradient step, the model applies a **soft‑thresholding** operation to the weight vector.
+- Conceptually:
+  - If a weight is **small in magnitude**, it is set to **exactly zero**.  
+  - If a weight is **large**, it is shrunk slightly toward zero but stays non‑zero.
+
+This step is what performs **feature selection**:
+
+- Weights that become exactly zero correspond to **features that are effectively removed** from the model.
+- Over many iterations, the algorithm gradually builds a sparse set of important features.
+
+Because the threshold used in soft‑thresholding is based on the **dynamic \(\lambda_t\)**, the aggressiveness of feature removal changes over time (stronger early, milder later).
 
 ---
 
 ## 7. Code Structure
 
-### 7.1 `src/data_preprocessing.py`
+The project code is organized as follows.
 
-- Handles:
-  - Dataset loading from OpenML.
-  - Outlier removal.
-  - Column dropping for sparse features.
-  - Train/test splitting.
-  - Missing value imputation.
-  - Categorical encoding using `OneHotEncoder`.
-  - Numerical scaling using `StandardScaler`.
-  - Optional saving of processed arrays to `data/processed/`.
-- Exposes `get_processed_data(save_to_disk=True)` which returns:
-  - `X_train`, `X_test`, `y_train`, `y_test`, `preprocessor`.
+### `src/data_preprocessing.py`
 
-### 7.2 `src/baselines.py`
+- Loads the House Prices dataset from OpenML.
+- Removes extreme outliers and drops some mostly empty columns.
+- Handles missing values (numerical and categorical).
+- Encodes categorical features using **one‑hot encoding**.
+- Scales numerical features using **standardization**.
+- Splits the data into training and test sets.
+- Returns the processed feature matrices and target arrays.
 
-- Implements baseline regression models using scikit-learn:
-  - **Linear Regression** (no regularization),
-  - **Ridge Regression** (L2 penalty),
-  - **Standard LASSO** (L1 penalty).
-- Core function:
-  - `compute_baseline_metrics(X_train, X_test, y_train, y_test)`:
-    - Trains each model.
-    - Computes:
-      - **Mean Squared Error (MSE)** on the test set.
-      - **Number of non-zero coefficients** (using a small threshold to handle floating-point precision).
-    - Returns a dictionary of metrics plus the total feature count.
-- Convenience entry point:
-  - `run_baselines()`:
-    - Calls `get_processed_data` and trains all baselines.
-    - Prints a summary table of results.
+### `src/baselines.py`
 
-### 7.3 `src/adaptive_lasso.py`
+- Runs the three baseline regression models:
+  - Linear Regression,
+  - Ridge Regression,
+  - Standard LASSO.
+- Computes:
+  - Test **Mean Squared Error (MSE)**,
+  - **Number of non‑zero coefficients** for each model.
+- Provides both a reusable function (`compute_baseline_metrics`) and a script entry point (`run_baselines`).
 
-- Defines the custom **`AdaptiveLasso`** class, implementing:
-  - A **proximal gradient descent loop** for optimizing the LASSO-style objective with an intercept.
-  - **Dynamic lambda scheduling** via:
-    - `lambda_t = lambda0 / sqrt(t)` (inverse square-root),
-    - `lambda_t = lambda0 * exp(-k * t)` (exponential decay),
-    - or a constant lambda.
-  - The **soft-thresholding operator**:
-    \[
-    w_i = \operatorname{sign}(w_i)\,\max(|w_i| - \eta \lambda_t, 0).
-    \]
-- API is similar to sklearn estimators:
-  - `__init__(learning_rate, lambda0, n_iters, schedule, decay_k, tol, fit_intercept, random_state, verbose)`,
-  - `fit(X, y)`,
-  - `predict(X)`,
-  - `compute_loss(X, y, w=None, b=None, lam=None)`,
-  - `soft_threshold(w, threshold)` (static method),
-  - `get_training_diagnostics()` for returning:
-    - `loss_history`,
-    - `sparsity_history`,
-    - `lambda_history`.
+### `src/adaptive_lasso.py`
 
-### 7.4 `src/train_adaptive_lasso.py`
+- Contains the main **Adaptive LASSO optimizer** implementation as a Python class `AdaptiveLasso`.
+- Key responsibilities:
+  - Maintain model parameters (`coef_` and `intercept_`).
+  - Implement the **training loop** using proximal gradient descent.
+  - Apply **dynamic lambda scheduling** (\(\lambda_t = \lambda_0 / \sqrt{t}\), etc.).
+  - Apply the **soft‑thresholding** operator to enforce sparsity.
+  - Record training diagnostics such as:
+    - Loss values over iterations,
+    - Number of non‑zero features over iterations,
+    - Lambda values over iterations.
 
-- Serves as the **main experiment runner**.
-- Responsibilities:
-  - Load processed data via `get_processed_data(save_to_disk=False)`.
-  - Instantiate and train `AdaptiveLasso` with a specified configuration.
-  - Compute **test MSE** and **number of non-zero coefficients** for Adaptive LASSO.
-  - Call `compute_baseline_metrics` to train and evaluate:
-    - Linear Regression,
-    - Ridge Regression,
-    - Standard LASSO.
-  - Aggregate all metrics (baselines + Adaptive LASSO) into a single dictionary.
-  - Save results and configuration into `results/metrics.json`.
-  - Call visualization utilities to create plots (loss curve, sparsity curve, model comparison).
-  - Print a summary comparison table in the console.
+### `src/train_adaptive_lasso.py`
 
-### 7.5 `src/visualization.py`
+- Runs the **full experiment pipeline** end‑to‑end:
+  1. Loads and preprocesses the dataset via `get_processed_data`.
+  2. Trains the `AdaptiveLasso` model with chosen hyperparameters.
+  3. Evaluates Adaptive LASSO on the test set (MSE and sparsity).
+  4. Trains and evaluates the baseline models using `compute_baseline_metrics`.
+  5. Aggregates all metrics into a single dictionary.
+  6. Saves metrics and plots to the `results/` folder.
+  7. Prints a results table to the console.
 
-- Provides plotting utilities for analyzing experiments:
-  - `plot_loss_curve(loss_history, save_path)`:
-    - Plots **loss vs iterations** (objective value over time) for Adaptive LASSO.
-  - `plot_sparsity_curve(sparsity_history, total_features, save_path)`:
-    - Plots **non-zero coefficient count vs iterations**, conveying how sparsity evolves.
-  - `plot_model_comparison(metrics, total_features, save_path)`:
-    - Produces a two-panel bar chart showing:
-      - Test MSE per model,
-      - Non-zero coefficients per model.
-- All plots are saved to the `results/` folder with informative filenames.
+This is the main script you run to reproduce the experiment.
 
-### 7.6 `README.md`
+### `src/visualization.py`
 
-- The document you are currently reading. It provides:
-  - Technical background,
-  - Detailed description of the optimization method,
-  - Explanation of the dataset and preprocessing,
-  - Overview of the code structure and experiment pipeline,
-  - Instructions for running and interpreting experiments.
+- Generates graphs to help analyze model behaviour:
+  - **Loss vs iterations**:
+    - Shows how quickly and smoothly the optimization converges.
+  - **Sparsity vs iterations**:
+    - Shows how the number of active (non‑zero) features changes during training.
+  - **Model comparison chart**:
+    - Compares MSE and number of non‑zero features across all models.
+
+### `results/` folder
+
+- After running the main training script, this folder contains:
+  - `metrics.json`  
+    - Stores the final MSE and non‑zero feature counts for each model, plus the Adaptive LASSO hyperparameters.
+  - `loss_curve.png`  
+    - Plot of loss (error + regularization) versus training iterations for Adaptive LASSO.
+  - `sparsity_curve.png`  
+    - Plot of the number of non‑zero features versus training iterations.
+  - `model_comparison.png`  
+    - Bar chart showing test MSE and number of non‑zero features for all four models.
 
 ---
 
-## 8. Experiment Metrics
+## 8. Experimental Results
 
-The project uses standard metrics to evaluate and compare models:
+### Metrics measured
 
-- **Mean Squared Error (MSE)**:
-  \[
-  \text{MSE} = \frac{1}{n} \sum_i (y_i - \hat{y}_i)^2.
-  \]
-  - Measures prediction accuracy on the test set.
-  - Lower MSE indicates better fit.
+We focus on two main metrics:
 
-- **Number of Non-Zero Coefficients**:
-  - Counts how many entries of the coefficient vector \(w\) are non-zero (above a small threshold).
-  - Indicates the **sparsity** of the model.
-  - Fewer non-zero coefficients → stronger feature selection.
+- **Mean Squared Error (MSE)**  
+  Measures how far the predicted log house prices are from the true values on average. Lower is better.
 
-- **Sparsity Percentage** (conceptual, can be derived):
-  \[
-  \text{Sparsity \%} = \left(1 - \frac{\#\{\text{non-zero coefficients}\}}{\text{total features}}\right) \times 100.
-  \]
-  - Represents the fraction of features that have been effectively pruned.
+- **Number of non‑zero features**  
+  Counts how many coefficients in the model are non‑zero. This tells us how **sparse** the model is.
 
-The objective is to achieve **strong sparsity** (low number of non-zero coefficients / high sparsity %) while maintaining **competitive MSE** relative to standard LASSO and other baselines.
+### Final results (from the latest run)
+
+- **Linear Regression**  
+  - MSE ≈ **0.0167**  
+  - Features used: **267** (all features)
+
+- **Ridge Regression**  
+  - MSE ≈ **0.0150**  
+  - Features used: **267** (all features, just shrunk)
+
+- **Standard LASSO**  
+  - MSE ≈ **0.0200**  
+  - Features used: **16**  
+  - Very sparse model with strong feature selection.
+
+- **Adaptive LASSO (ours)**  
+  - MSE ≈ **0.1039**  
+  - Features used: **91**  
+  - Moderately sparse model with dynamic regularization.
+
+### Interpreting the results in simple terms
+
+- **Ridge** has the **lowest MSE**, but it keeps **all 267 features**, so it does not help interpretability.
+- **Standard LASSO** uses only **16 features**, which is extremely sparse and very interpretable, with a small increase in MSE compared to Ridge.
+- **Adaptive LASSO** uses **91 features**, so it is less sparse than Standard LASSO but still much sparser than Linear or Ridge. Its MSE is higher than the others, showing that our chosen hyperparameters favour sparsity more strongly than accuracy.
+
+These results illustrate the classic **trade‑off between accuracy and sparsity**:
+
+- If you want **maximum accuracy**, Ridge (or even Linear Regression) is best.  
+- If you want **maximum sparsity**, Standard LASSO with strong regularization is best.  
+- Adaptive LASSO provides a **different sparsity pattern** based on its dynamic schedule. By tuning its hyperparameters, we can move it closer to either side of this trade‑off.
 
 ---
 
-## 9. Result Visualizations
+## 9. Key Findings
 
-The following plots are generated and saved to the `results/` directory:
+From this project, we can summarize the following key points:
 
-- **Loss vs Iterations (`loss_curve.png`)**
-  - X-axis: iteration index.
-  - Y-axis: objective value (MSE + L1 penalty) for Adaptive LASSO.
-  - Shows the convergence behaviour of the proximal gradient algorithm.
-  - A smoothly decreasing curve indicates stable optimization.
+- **Adaptive LASSO gradually reduces features during training**  
+  Because the regularization strength starts high and decays over iterations, many features are pruned early, and only a subset remains active later.
 
-- **Sparsity vs Iterations (`sparsity_curve.png`)**
-  - X-axis: iteration index.
-  - Y-axis: number of non-zero coefficients in \(w\) at each iteration.
-  - Shows how quickly and how strongly the model becomes sparse.
-  - Typically, you see a rapid drop early on (aggressive pruning) and stabilization later.
+- **It produces a model with fewer features than unregularized regression**  
+  Compared to Linear and Ridge Regression (267 features), Adaptive LASSO ends up using only 91 features, which is a significant reduction.
 
-- **Model Comparison (`model_comparison.png`)**
-  - Two panels:
-    - Test MSE across all models (Linear, Ridge, LASSO, Adaptive LASSO).
-    - Number of non-zero coefficients across all models.
-  - Helps visualize the trade-off between **accuracy** (MSE) and **sparsity** (non-zero count).
-  - Adaptive LASSO is expected to achieve:
-    - Similar MSE to standard LASSO,
-    - Fewer non-zero coefficients, i.e., better sparsity.
+- **Dynamic regularization behaves differently from standard LASSO**  
+  Standard LASSO uses one fixed penalty and tends to “decide” the sparsity pattern more uniformly. Adaptive LASSO changes its penalty over time, which leads to a different path of feature selection and potentially offers more control over when and how features are pruned.
 
-These visualizations make it easier to reason about both the **optimization dynamics** and the **final model quality**.
+Overall, the project shows that **changing the regularization strength during optimization** is a viable technique for exploring different sparsity behaviours and understanding the trade‑off between model simplicity and accuracy.
 
 ---
 
 ## 10. How to Run the Project
 
-### 10.1 Install Dependencies
+You can reproduce the experiments with just a few commands.
 
-Use Python 3.9+ and install the required packages:
+### Step 1: Install dependencies
+
+Make sure you have Python 3.9+ installed, then run:
 
 ```bash
-pip install scikit-learn numpy pandas matplotlib
+pip install numpy pandas scikit-learn matplotlib
 ```
 
-### 10.2 Run Preprocessing and Experiments
+### Step 2: Run the experiment
 
-In most cases you can simply run the main training script, which will internally call the preprocessing pipeline if needed:
+From the project root directory, run:
 
 ```bash
 python src/train_adaptive_lasso.py
 ```
 
-This will:
-- Download and preprocess the House Prices dataset (if not already done).
-- Train the Adaptive LASSO optimizer using proximal gradient descent with dynamic soft thresholding.
-- Train baseline models (Linear, Ridge, LASSO).
-- Compute evaluation metrics for all models.
-- Save:
-  - `results/metrics.json`,
-  - `results/loss_curve.png`,
-  - `results/sparsity_curve.png`,
-  - `results/model_comparison.png`.
+This script will:
 
-Optionally, you can:
+- Download and preprocess the House Prices dataset (if not already cached).
+- Train all four models:
+  - Linear Regression,
+  - Ridge Regression,
+  - Standard LASSO,
+  - Adaptive LASSO (with dynamic regularization).
+- Compute and print the **MSE** and **number of non‑zero features** for each model.
+- Save the results to the `results/` folder:
+  - `metrics.json` (numerical results),
+  - `loss_curve.png`,
+  - `sparsity_curve.png`,
+  - `model_comparison.png`.
 
-- Run **only preprocessing**:
-  ```bash
-  python src/data_preprocessing.py
-  ```
-
-- Run **only baselines**:
-  ```bash
-  python src/baselines.py
-  ```
+You can open these files to quickly understand how the models behaved.
 
 ---
 
-## 11. Expected Outcome
+## 11. Conclusion
 
-The experiment is designed to demonstrate that **Adaptive LASSO with dynamic soft thresholding** can:
+This project demonstrates how **numerical optimization techniques** can be used not only to fit regression models, but also to **control feature selection** in a principled way.
 
-- **Reduce the number of selected features** compared to standard LASSO, by pruning aggressively early in training.
-- **Maintain competitive prediction accuracy** (test MSE similar to standard LASSO and not much worse than Ridge or Linear Regression).
-- **Improve interpretability** by producing a sparser model where a smaller subset of features carries most of the predictive power.
+By implementing Adaptive LASSO with **proximal gradient descent** and a **dynamic soft‑thresholding schedule**, we:
 
-In summary, the Adaptive LASSO optimizer aims to achieve a better **sparsity–accuracy trade-off** than static L1 regularization.
+- Built a complete pipeline from data preprocessing to model training and visualization.
+- Compared multiple regression models on a real‑world dataset.
+- Observed how dynamic regularization affects sparsity and accuracy.
 
----
-
-## 12. Future Improvements
-
-Several extensions and improvements are possible:
-
-- **Adaptive per-feature lambda**  
-  Instead of a single \(\lambda_t\) for all coefficients, introduce **feature-wise weights** (e.g., based on an initial estimator). This would align more closely with the classical Adaptive LASSO formulation:
-  \[
-  \sum_j \omega_j |w_j|, \quad \omega_j = \frac{1}{|\hat{w}_j|^\gamma}.
-  \]
-
-- **Coordinate Descent Comparison**  
-  Implement a coordinate descent solver for LASSO and Adaptive LASSO, and compare:
-  - Convergence speeds,
-  - Final sparsity patterns,
-  - Sensitivity to hyperparameters.
-
-- **Cross-Validation Tuning**  
-  Use cross-validation to select:
-  - The base regularization strength \(\lambda_0\),
-  - The decay rate \(k\) for exponential schedules,
-  - The learning rate \(\eta\) and number of iterations.
-  This would make the method more robust and production-ready.
-
-- **Alternative Schedules and Continuation Strategies**  
-  Experiment with other schedules (e.g., piecewise-constant, linear decay, or more general continuation methods) to further study their impact on feature selection and convergence behaviour.
-
-These directions can form the basis for deeper exploration in numerical optimization and sparse modeling.
+The code and explanations in this repository are designed to make it easier to **present and defend the project** during a viva or presentation, and to serve as a starting point for further experiments in sparse modeling and numerical optimization.
