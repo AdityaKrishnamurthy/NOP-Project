@@ -33,7 +33,7 @@ This project explores how **numerical optimization techniques** (in particular p
 
 The dataset used in this project is:
 
-> **House Prices: Advanced Regression Techniques** (popular Kaggle dataset, also available via OpenML)
+#### [House Prices: Advanced Regression Techniques](https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data) (Popular Kaggle dataset)
 
 Each row in the dataset corresponds to a house sale. The features include:
 
@@ -349,5 +349,3 @@ By implementing Adaptive LASSO with **proximal gradient descent** and a **dynami
 - Built a complete pipeline from data preprocessing to model training and visualization.
 - Compared multiple regression models on a real‑world dataset.
 - Observed how dynamic regularization affects sparsity and accuracy.
-
-The code and explanations in this repository are designed to make it easier to **present and defend the project** during a viva or presentation, and to serve as a starting point for further experiments in sparse modeling and numerical optimization.
