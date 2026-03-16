@@ -349,3 +349,27 @@ By implementing Adaptive LASSO with **proximal gradient descent** and a **dynami
 - Built a complete pipeline from data preprocessing to model training and visualization.
 - Compared multiple regression models on a real‑world dataset.
 - Observed how dynamic regularization affects sparsity and accuracy.
+
+---
+
+## Team Members
+
+| USN        | Name                |
+| ---------- | ------------------- |
+| 23BTRCL127 | ADITYA K |
+| 23BTRCL248 | Avinash GK |
+| 23BTRCL135 | Devansh Gupta M |
+| 23BTRCL099 | Bhavan Jaganathan |
+
+Department of **Artificial Intelligence and Machine Learning**
+Faculty of Engineering and Technology
+
+---
+
+## Project Guide
+
+Dr. Shivam Swarup
+Assistant Professor – AIML
+Domain: **Online Optimization, Bandits & Distributed AI**
+
+---
